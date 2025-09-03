@@ -44,8 +44,8 @@ k8s_resource('api-gateway', port_forwards=8081,
 
 # Uncomment once we have a trip service
 
-#trip_compile_cmd = 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/trip-service ./services/trip-service/cmd/main.go'
-#if os.name == 'nt':
+# trip_compile_cmd = 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/trip-service ./services/trip-service/cmd/main.go'
+# if os.name == 'nt':
 #  trip_compile_cmd = './infra/development/docker/trip-build.bat'
 
 # local_resource(
@@ -70,6 +70,53 @@ k8s_resource('api-gateway', port_forwards=8081,
 
 # k8s_yaml('./infra/development/k8s/trip-service-deployment.yaml')
 # k8s_resource('trip-service', resource_deps=['trip-service-compile'], labels="services")
+
+
+### Trip Service ###
+
+trip_compile_cmd = 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/trip-service ./services/trip-service/cmd/main.go'
+if os.name == 'nt':
+    trip_compile_cmd = './infra/development/docker/trip-build.bat'
+
+# Step 1: Compile trip-service locally (binary ends up in ./build/trip-service)
+local_resource(
+    'trip-service-compile',
+    trip_compile_cmd,
+    deps=['./services/trip-service', './shared'],
+    labels=["compiles"],
+)
+
+# Step 2: Build the Docker image for trip-service
+docker_build_with_restart(
+    'ride-sharing/trip-service',
+    '.',   # build context is repo root (so Tilt can watch ./shared too)
+    entrypoint=['/app/build/trip-service'],
+    dockerfile='./infra/development/docker/trip-service.Dockerfile',
+    only=[
+        './build/trip-service',
+        './services/trip-service',
+        './shared',
+    ],
+    live_update=[
+        sync('./build', '/app/build'),
+        sync('./services/trip-service', '/app/services/trip-service'),
+        sync('./shared', '/app/shared'),
+    ],
+)
+
+# Step 3: Apply Kubernetes manifests for trip-service
+k8s_yaml('./infra/development/k8s/trip-service-deployment.yaml')
+
+# Step 4: Register trip-service as a Tilt resource, depending on compilation step
+k8s_resource(
+    'trip-service',
+    resource_deps=['trip-service-compile'],
+    labels=["services"],
+)
+
+### End of Trip Service ###
+
+
 
 ### End of Trip Service ###
 ### Web Frontend ###
